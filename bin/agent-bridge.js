@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+/**
+ * agent-bridge — Claude plans, agents execute. Delegate a task to Codex or Gemini
+ * (extensible), with a plain-Markdown filesystem work-log Claude reads anytime.
+ */
+"use strict";
+const { spawnSync, execFileSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const fslog = require("../lib/fslog");
+const { AGENTS } = require("../lib/agents");
+const { dispatch } = require("../lib/dispatch");
+
+const LIB = path.join(__dirname, "..", "lib");
+const SKILLS = path.join(__dirname, "..", "skills");
+const HOME = os.homedir();
+const AGENT_NAMES = Object.keys(AGENTS);
+
+function has(bin) {
+  try { execFileSync("bash", ["-lc", `command -v ${bin}`], { stdio: "ignore" }); return true; } catch { return false; }
+}
+function expandHome(p) {
+  if (p === "~") return HOME;
+  if (p && p.startsWith("~/")) return path.join(HOME, p.slice(2));
+  return p;
+}
+function bridgeHome() {
+  return expandHome(process.env.AGENT_BRIDGE_HOME) || path.join(HOME, ".agent-bridge");
+}
+function bridgeEnv() {
+  return { ...process.env, RELAY_DB: process.env.RELAY_DB || path.join(bridgeHome(), "relay.db") };
+}
+function py(script, args) {
+  const r = spawnSync("python3", [path.join(LIB, script), ...args], { stdio: "inherit", env: bridgeEnv() });
+  process.exitCode = r.status || 0;
+}
+
+function usage() {
+  console.log(`agent-bridge — Claude plans, agents execute (filesystem work-log)
+
+Usage:
+  agent-bridge run --agent <${AGENT_NAMES.join("|")}> "<task>"   Delegate a task
+       [-C <dir>] [-s read-only|workspace-write] [--verify]
+  agent-bridge list                 List tasks with their live status
+  agent-bridge status [<id>|latest] Show a task's status.md (default: latest)
+  agent-bridge result [<id>|latest] Show a task's result.md
+  agent-bridge watch  [<id>|latest] Live-tail a task's status.md
+  agent-bridge tokens               Cross-agent token report (needs OTEL for Claude)
+  agent-bridge otel                 Start the Claude-token OTLP receiver
+  agent-bridge dashboard [--port n] [--open]
+                                    Run the dashboard in the foreground (debug)
+  agent-bridge up [--port n] [--open]   Start dashboard + OTEL as background services
+  agent-bridge open                 Open the dashboard in your browser (starts if needed)
+  agent-bridge down                 Stop the background services
+  agent-bridge autostart [on|off]   Run the dashboard automatically at login
+  agent-bridge service status       Is the dashboard running?
+  agent-bridge install              Register MCPs + /codex-send /agy-send skills + start the dashboard
+  agent-bridge doctor               Check agents + auth
+
+Tasks live in ~/.agent-bridge/tasks/<id>/ as plain Markdown (task.md, status.md,
+result.md). After 'install', just tell Claude Code: "/codex-send <task>" or "/agy-send <task>".`);
+}
+
+function parseRun(argv) {
+  const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", prompt: null, verify: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--agent" || a === "-a") o.agent = argv[++i];
+    else if (a === "-C") o.cwd = path.resolve(argv[++i]);
+    else if (a === "-s") o.sandbox = argv[++i];
+    else if (a === "--verify") o.verify = true;
+    else o.prompt = o.prompt ? o.prompt + " " + a : a;
+  }
+  return o;
+}
+
+async function cmdRun(argv) {
+  const o = parseRun(argv);
+  if (!o.agent) return console.error(`--agent required (one of: ${AGENT_NAMES.join(", ")})`) || process.exit(1);
+  if (!o.prompt) return console.error(`no task given`) || process.exit(1);
+  if (!AGENTS[o.agent]) return console.error(`unknown agent '${o.agent}'`) || process.exit(1);
+  if (o.verify) process.env.AGENT_BRIDGE_TELEMETRY_VERIFY = "1";
+  const r = await dispatch(o);
+  console.log(`── ${o.agent} finished (exit ${r.code}) ──`);
+  const res = path.join(r.dir, "result.md");
+  if (fs.existsSync(res)) process.stdout.write("\n" + fs.readFileSync(res, "utf8"));
+  console.log(`\n── files: ${r.dir}`);
+  console.log(`   status:  agent-bridge status ${r.id}`);
+  process.exit(r.code);
+}
+
+function cmdList() {
+  const tasks = fslog.listTasks();
+  if (!tasks.length) return console.log("(no tasks yet)");
+  console.log(`${"status".padEnd(9)} ${"prog".padStart(4)}  ${"agent".padEnd(7)} id`);
+  console.log("─".repeat(64));
+  for (const t of tasks.slice(0, 30))
+    console.log(`${(t.status || "?").padEnd(9)} ${String(t.progress || 0).padStart(3)}%  ${(t.agent || "?").padEnd(7)} ${t.id}`);
+}
+
+function showFile(argv, file) {
+  const dir = fslog.taskDir(argv[0]);
+  if (!dir) return console.error("no such task");
+  const f = path.join(dir, file);
+  if (!fs.existsSync(f)) return console.log(`(${file} not written yet)`);
+  process.stdout.write(fs.readFileSync(f, "utf8"));
+}
+
+function cmdWatch(argv) {
+  const dir = fslog.taskDir(argv[0]);
+  if (!dir) return console.error("no such task");
+  const f = path.join(dir, "status.md");
+  let last = "";
+  console.log(`watching ${f}  (ctrl-c to stop)\n`);
+  setInterval(() => {
+    try { const c = fs.readFileSync(f, "utf8"); if (c !== last) { last = c; console.clear(); process.stdout.write(c); } } catch {}
+  }, 1000);
+}
+
+function parseDashboard(argv) {
+  const o = { port: 7676, open: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--port" || a === "-p") o.port = Number(argv[++i]);
+    else if (a === "--open") o.open = true;
+    else return null;
+  }
+  if (!Number.isInteger(o.port) || o.port < 0 || o.port > 65535) return null;
+  return o;
+}
+
+function openUrl(url) {
+  const bin = process.platform === "darwin" ? "open" : "xdg-open";
+  spawnSync(bin, [url], { stdio: "ignore", detached: true });
+}
+
+async function cmdDashboard(argv) {
+  const o = parseDashboard(argv);
+  if (!o) return console.error("usage: agent-bridge dashboard [--port <n>] [--open]") || process.exit(1);
+  process.env.RELAY_DB = bridgeEnv().RELAY_DB;
+  const { startServer } = require("../lib/dashboard");
+  try {
+    const { url } = await startServer({ port: o.port });
+    console.log(`agent-bridge dashboard listening at ${url}`);
+    if (o.open) openUrl(url);
+  } catch (e) {
+    console.error(`dashboard failed: ${e.message || e}`);
+    process.exit(1);
+  }
+}
+
+const service = require("../lib/service");
+
+async function cmdUp(argv) {
+  const p = parseDashboard(argv);
+  const r = await service.up({ port: p && p.port });
+  for (const d of r.results)
+    console.log(`  ${d.already ? "•" : "▶"} ${d.name}${d.already ? " already running" : " started"}${d.pid ? ` (pid ${d.pid})` : ""}`);
+  console.log(`\n✅ dashboard running at ${r.url}   (agent-bridge open · agent-bridge down)`);
+  if (p && p.open) openUrl(r.url);
+}
+function cmdDown() {
+  const r = service.down();
+  console.log(`stopped dashboard${r.dashboard ? ` (pid ${r.dashboard})` : ""} + otel${r.otel ? ` (pid ${r.otel})` : ""}`);
+}
+async function cmdOpen() {
+  const r = await service.up();            // ensure it's running
+  openUrl(r.url);
+  console.log(`opening ${r.url}`);
+}
+function cmdAutostart(argv) {
+  const sub = argv[0];
+  if (sub === "off") { service.autostartOff(); return console.log("autostart disabled"); }
+  const r = service.autostartOn();
+  if (r.platform === "linux") return console.log(r.note);
+  console.log(r.loaded
+    ? `✅ autostart enabled — dashboard runs at login and now, at ${r.url}\n   plist: ${r.plist}`
+    : `⚠ wrote ${r.plist} but launchctl load failed; run:  launchctl load -w ${r.plist}`);
+}
+function cmdService(argv) {
+  const sub = argv[0];
+  if (sub === "status" || !sub) return service.status((s) => console.log(
+    `dashboard ${s.listening ? "● running" : "○ stopped"} at ${s.url}\n` +
+    `autostart: ${s.launchAgent ? "on (launchd)" : s.autostart ? "on" : "off"}`));
+  if (sub === "up") return cmdUp(argv.slice(1));
+  if (sub === "down") return cmdDown();
+  console.error("usage: agent-bridge service [status|up|down]");
+}
+
+async function install() {
+  console.log("agent-bridge install\n────────────────────");
+  doctor();
+  // Register Codex as an MCP (Gemini has no stdio MCP-server mode yet).
+  if (has("codex")) {
+    console.log("\n▶ registering codex MCP (user scope)…");
+    spawnSync("claude", ["mcp", "add", "codex", "--scope", "user", "--", "codex", "mcp-server",
+      "-c", "approval_policy=never", "-c", "sandbox_mode=workspace-write"], { stdio: "inherit" });
+  }
+  const roots = [path.join(HOME, ".agents", "skills"), path.join(HOME, ".claude", "skills")];
+  const skillRoot = roots.find((d) => fs.existsSync(d)) || roots[0];
+  const names = fs.readdirSync(SKILLS).filter((n) => fs.existsSync(path.join(SKILLS, n, "SKILL.md")));
+  for (const n of names) {
+    const dest = path.join(skillRoot, n);
+    fs.mkdirSync(dest, { recursive: true });
+    fs.copyFileSync(path.join(SKILLS, n, "SKILL.md"), path.join(dest, "SKILL.md"));
+  }
+  console.log(`▶ installed skills [${names.map((n) => "/" + n).join(" ")}] → ${skillRoot}`);
+  // Start the dashboard now AND make it auto-run at login.
+  console.log("\n▶ starting the telemetry dashboard…");
+  const r = service.autostartOn();
+  if (r.platform === "mac" && r.loaded) console.log(`  ✅ dashboard running at ${r.url} (auto-starts at login)`);
+  else { const u = await service.up(); console.log(`  ✅ dashboard running at ${u.url}`); if (r.note) console.log("  " + r.note.split("\n").join("\n  ")); }
+  console.log(`\n✅ Restart Claude Code, then delegate with: "/codex-send <task>" or "/agy-send <task>".`);
+  console.log(`   Dashboard:  agent-bridge open`);
+}
+
+function doctor() {
+  for (const name of AGENT_NAMES) {
+    const spec = AGENTS[name];
+    const ok = has(spec.bin);
+    console.log(`  ${ok ? "✅" : "❌"} ${name} (${spec.bin})${ok ? "" : `  — install it`}`);
+    if (ok && name === "gemini" && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENAI_USE_VERTEXAI)
+      console.log(`     ⚠ auth: ${spec.authHint}`);
+  }
+  console.log(`  ${has("claude") ? "✅" : "❌"} claude (Claude Code)`);
+}
+
+(async () => {
+  const [cmd, ...rest] = process.argv.slice(2);
+  switch (cmd) {
+    case "run": await cmdRun(rest); break;
+    case "list": cmdList(); break;
+    case "status": showFile(rest, "status.md"); break;
+    case "result": showFile(rest, "result.md"); break;
+    case "watch": cmdWatch(rest); break;
+    case "tokens": py("relay.py", ["tokens"]); break;
+    case "otel": py("otel-claude.py", rest); break;
+    case "dashboard": await cmdDashboard(rest); break;
+    case "up": await cmdUp(rest); break;
+    case "down": cmdDown(); break;
+    case "open": await cmdOpen(); break;
+    case "autostart": cmdAutostart(rest); break;
+    case "service": cmdService(rest); break;
+    case "install": await install(); break;
+    case "doctor": doctor(); break;
+    case undefined: case "-h": case "--help": case "help": usage(); break;
+    default: console.error(`unknown command: ${cmd}\n`); usage(); process.exit(1);
+  }
+})();

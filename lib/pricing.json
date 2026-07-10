@@ -1,0 +1,9 @@
+{
+  "opus": { "inPerM": 15, "cachedPerM": 1.5, "outPerM": 75 },
+  "sonnet": { "inPerM": 3, "cachedPerM": 0.3, "outPerM": 15 },
+  "haiku": { "inPerM": 0.8, "cachedPerM": 0.08, "outPerM": 4 },
+  "codex": { "inPerM": 0, "cachedPerM": 0, "outPerM": 0 },
+  "gpt": { "inPerM": 0, "cachedPerM": 0, "outPerM": 0 },
+  "gemini": { "inPerM": 0, "cachedPerM": 0, "outPerM": 0 },
+  "default": { "inPerM": 0, "cachedPerM": 0, "outPerM": 0 }
+}

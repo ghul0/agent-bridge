@@ -1,0 +1,12 @@
+{
+  "name": "agent-bridge",
+  "version": "0.1.0",
+  "description": "Claude plans, agents execute. A bridge that delegates coding tasks from Claude Code to Codex or Gemini, with a plain-Markdown filesystem work-log Claude reads anytime.",
+  "bin": {
+    "agent-bridge": "bin/agent-bridge.js"
+  },
+  "files": ["bin/", "lib/", "skills/", "README.md", "LICENSE"],
+  "engines": { "node": ">=18" },
+  "keywords": ["claude", "claude-code", "codex", "gemini", "gemini-cli", "mcp", "ai-agents", "orchestration", "multi-agent"],
+  "license": "MIT"
+}
