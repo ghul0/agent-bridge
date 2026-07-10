@@ -42,6 +42,8 @@ function usage() {
 Usage:
   agent-bridge run --agent <${AGENT_NAMES.join("|")}> "<task>"   Delegate a task
        [-C <dir>] [-s read-only|workspace-write] [--verify]
+       [--isolate]  run in a private git worktree+branch (no collisions)
+       [--pr]       --isolate, then commit + push + open a PR (needs gh + remote)
   agent-bridge list                 List tasks with their live status
   agent-bridge status [<id>|latest] Show a task's status.md (default: latest)
   agent-bridge result [<id>|latest] Show a task's result.md
@@ -62,14 +64,18 @@ Tasks live in ~/.agent-bridge/tasks/<id>/ as plain Markdown (task.md, status.md,
 result.md). After 'install', just tell Claude Code: "/codex-send <task>" or "/agy-send <task>".`);
 }
 
+const SANDBOXES = ["read-only", "workspace-write"];
+
 function parseRun(argv) {
-  const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", prompt: null, verify: false };
+  const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", prompt: null, verify: false, isolate: false, pr: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--agent" || a === "-a") o.agent = argv[++i];
     else if (a === "-C") o.cwd = path.resolve(argv[++i]);
     else if (a === "-s") o.sandbox = argv[++i];
     else if (a === "--verify") o.verify = true;
+    else if (a === "--isolate") o.isolate = true;
+    else if (a === "--pr") { o.pr = true; o.isolate = true; }
     else o.prompt = o.prompt ? o.prompt + " " + a : a;
   }
   return o;
@@ -80,11 +86,15 @@ async function cmdRun(argv) {
   if (!o.agent) return console.error(`--agent required (one of: ${AGENT_NAMES.join(", ")})`) || process.exit(1);
   if (!o.prompt) return console.error(`no task given`) || process.exit(1);
   if (!AGENTS[o.agent]) return console.error(`unknown agent '${o.agent}'`) || process.exit(1);
+  if (!SANDBOXES.includes(o.sandbox)) return console.error(`invalid -s '${o.sandbox}' (use: ${SANDBOXES.join(" | ")})`) || process.exit(1);
   if (o.verify) process.env.AGENT_BRIDGE_TELEMETRY_VERIFY = "1";
-  const r = await dispatch(o);
+  let r;
+  try { r = await dispatch(o); }
+  catch (e) { console.error(`✗ dispatch failed: ${e.message || e}`); process.exit(1); }
   console.log(`── ${o.agent} finished (exit ${r.code}) ──`);
   const res = path.join(r.dir, "result.md");
   if (fs.existsSync(res)) process.stdout.write("\n" + fs.readFileSync(res, "utf8"));
+  if (r.pr) console.log(r.pr.url ? `── PR opened: ${r.pr.url}` : `── PR skipped: ${r.pr.skipped || r.pr.error}`);
   console.log(`\n── files: ${r.dir}`);
   console.log(`   status:  agent-bridge status ${r.id}`);
   process.exit(r.code);
