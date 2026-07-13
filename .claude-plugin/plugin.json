@@ -1,0 +1,10 @@
+{
+  "name": "agent-bridge",
+  "displayName": "Agent Bridge",
+  "description": "Claude plans, agents execute. Delegate coding tasks from Claude Code to OpenAI Codex or Google Antigravity with a plain-Markdown work-log, verifiable telemetry, git-worktree isolation, warm MCP sessions, and PRs.",
+  "version": "0.1.0",
+  "author": { "name": "Ian Kiku" },
+  "homepage": "https://github.com/iankiku/agent-bridge",
+  "repository": "https://github.com/iankiku/agent-bridge",
+  "keywords": ["codex", "antigravity", "agy", "mcp", "orchestration", "multi-agent", "delegation"]
+}

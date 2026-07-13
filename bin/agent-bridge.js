@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * agent-bridge — Claude plans, agents execute. Delegate a task to Codex or Gemini
+ * agent-bridge — Claude plans, agents execute. Delegate a task to Codex or Antigravity
  * (extensible), with a plain-Markdown filesystem work-log Claude reads anytime.
  */
 "use strict";
@@ -41,9 +41,14 @@ function usage() {
 
 Usage:
   agent-bridge run --agent <${AGENT_NAMES.join("|")}> "<task>"   Delegate a task
-       [-C <dir>] [-s read-only|workspace-write] [--verify]
+       [-C <dir>] [-s read-only|workspace-write] [--model <name>] [--transport mcp|exec] [--verify]
        [--isolate]  run in a private git worktree+branch (no collisions)
        [--pr]       --isolate, then commit + push + open a PR (needs gh + remote)
+       [--session <name>]  reuse the agent's conversation + worktree across runs
+  agent-bridge sessions             List reusable sessions
+  agent-bridge warm up|status|down  Warm continuous Codex (persistent mcp-server)
+  agent-bridge warm send --session <name> [-C dir] "prompt"
+                                    Send to a warm session, get the response back
   agent-bridge list                 List tasks with their live status
   agent-bridge status [<id>|latest] Show a task's status.md (default: latest)
   agent-bridge result [<id>|latest] Show a task's result.md
@@ -57,7 +62,7 @@ Usage:
   agent-bridge down                 Stop the background services
   agent-bridge autostart [on|off]   Run the dashboard automatically at login
   agent-bridge service status       Is the dashboard running?
-  agent-bridge install              Register MCPs + /codex-send /agy-send skills + start the dashboard
+  agent-bridge install              Install /codex-send /agy-send skills + start the dashboard
   agent-bridge doctor               Check agents + auth
 
 Tasks live in ~/.agent-bridge/tasks/<id>/ as plain Markdown (task.md, status.md,
@@ -65,20 +70,34 @@ result.md). After 'install', just tell Claude Code: "/codex-send <task>" or "/ag
 }
 
 const SANDBOXES = ["read-only", "workspace-write"];
+const CODEX_TRANSPORTS = ["mcp", "exec"];
 
 function parseRun(argv) {
-  const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", prompt: null, verify: false, isolate: false, pr: false };
+  const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", transport: null,
+    prompt: null, verify: false, isolate: false, pr: false, session: null, model: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--agent" || a === "-a") o.agent = argv[++i];
     else if (a === "-C") o.cwd = path.resolve(argv[++i]);
     else if (a === "-s") o.sandbox = argv[++i];
+    else if (a === "--model" || a === "-m") o.model = argv[++i];
+    else if (a === "--transport") o.transport = argv[++i];
     else if (a === "--verify") o.verify = true;
     else if (a === "--isolate") o.isolate = true;
     else if (a === "--pr") { o.pr = true; o.isolate = true; }
+    else if (a === "--session") o.session = argv[++i];
     else o.prompt = o.prompt ? o.prompt + " " + a : a;
   }
   return o;
+}
+
+function cmdSessions() {
+  const s = fslog.listSessions();
+  if (!s.length) return console.log("(no sessions yet — start one with: run --session <name> ...)");
+  console.log(`${"session".padEnd(16)} ${"agent".padEnd(11)} ${"turns".padStart(5)}  sessionId`);
+  console.log("─".repeat(70));
+  for (const x of s)
+    console.log(`${x.name.padEnd(16)} ${(x.agent || "?").padEnd(11)} ${String(x.turns || 0).padStart(5)}  ${(x.sessionId || "-").slice(0, 20)}`);
 }
 
 async function cmdRun(argv) {
@@ -87,6 +106,9 @@ async function cmdRun(argv) {
   if (!o.prompt) return console.error(`no task given`) || process.exit(1);
   if (!AGENTS[o.agent]) return console.error(`unknown agent '${o.agent}'`) || process.exit(1);
   if (!SANDBOXES.includes(o.sandbox)) return console.error(`invalid -s '${o.sandbox}' (use: ${SANDBOXES.join(" | ")})`) || process.exit(1);
+  if (o.transport && o.agent !== "codex") return console.error(`--transport is only supported for codex`) || process.exit(1);
+  if (o.agent === "codex" && o.transport && !CODEX_TRANSPORTS.includes(o.transport))
+    return console.error(`invalid --transport '${o.transport}' (use: ${CODEX_TRANSPORTS.join(" | ")})`) || process.exit(1);
   if (o.verify) process.env.AGENT_BRIDGE_TELEMETRY_VERIFY = "1";
   let r;
   try { r = await dispatch(o); }
@@ -188,6 +210,46 @@ function cmdAutostart(argv) {
     ? `✅ autostart enabled — dashboard runs at login and now, at ${r.url}\n   plist: ${r.plist}`
     : `⚠ wrote ${r.plist} but launchctl load failed; run:  launchctl load -w ${r.plist}`);
 }
+const WARM_PORT = Number(process.env.WARM_PORT || 7677);
+function warmUrl() { return `http://localhost:${WARM_PORT}`; }
+
+async function cmdWarm(argv) {
+  const sub = argv[0];
+  if (sub === "serve") { require("../lib/warm-daemon").serve(); return; }         // internal (daemon body)
+  if (sub === "up") {
+    const r = service.startDaemon("warm", ["warm", "serve"], { ...bridgeEnv(), WARM_PORT: String(WARM_PORT) });
+    return console.log(r.already ? `• warm daemon already running (pid ${r.pid})` : `▶ warm daemon started (pid ${r.pid}) at ${warmUrl()}`);
+  }
+  if (sub === "down") { const pid = service.stopDaemon("warm"); return console.log(`stopped warm daemon${pid ? ` (pid ${pid})` : ""}`); }
+  if (sub === "status") {
+    try { const r = await fetch(`${warmUrl()}/status`); const d = await r.json();
+      console.log(`warm daemon ● up · ${d.sessions.length} session(s)`);
+      for (const s of d.sessions) console.log(`  ${s.name.padEnd(16)} thread ${(s.threadId || "-").slice(0, 12)}  cwd ${s.cwd}`);
+    } catch { console.log("warm daemon ○ not running (start it: agent-bridge warm up)"); }
+    return;
+  }
+  // warm send: --session <name> [-C dir] [-s sandbox] "prompt"
+  if (sub === "send") {
+    const o = parseRun(argv.slice(1));
+    if (!o.session) return console.error("--session <name> required") || process.exit(1);
+    if (!o.prompt) return console.error("no prompt given") || process.exit(1);
+    // auto-start the daemon if needed
+    const alive = await new Promise((res) => service.portListening(WARM_PORT, res));
+    if (!alive) { service.startDaemon("warm", ["warm", "serve"], { ...bridgeEnv(), WARM_PORT: String(WARM_PORT) });
+      await new Promise((res) => { const t = setInterval(() => service.portListening(WARM_PORT, (a) => a && (clearInterval(t), res())), 400); }); }
+    try {
+      const r = await fetch(`${warmUrl()}/send`, { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: o.session, prompt: o.prompt, cwd: o.cwd, sandbox: o.sandbox, model: o.model }) });
+      const d = await r.json();
+      if (d.error) { console.error(`✗ ${d.error}`); process.exit(1); }
+      console.log(`── codex (warm, task ${d.task}, session '${o.session}', thread ${(d.threadId || "").slice(0, 8)}, ${d.events} events) ──\n`);
+      console.log(d.text);
+    } catch (e) { console.error(`✗ warm send failed: ${e.message}`); process.exit(1); }
+    return;
+  }
+  console.error("usage: agent-bridge warm <up|send|status|down>  (send: --session <name> [-C dir] \"prompt\")");
+}
+
 function cmdService(argv) {
   const sub = argv[0];
   if (sub === "status" || !sub) return service.status((s) => console.log(
@@ -201,10 +263,11 @@ function cmdService(argv) {
 async function install() {
   console.log("agent-bridge install\n────────────────────");
   doctor();
-  // Register Codex as an MCP (Gemini has no stdio MCP-server mode yet).
+  // Register direct Codex MCP as an escape hatch. The primary path remains /codex-send
+  // -> agent-bridge run -> bridge-owned task ledger -> Codex MCP.
   if (has("codex")) {
-    console.log("\n▶ registering codex MCP (user scope)…");
-    spawnSync("claude", ["mcp", "add", "codex", "--scope", "user", "--", "codex", "mcp-server",
+    console.log("\n▶ registering codex-direct MCP escape hatch (user scope)…");
+    spawnSync("claude", ["mcp", "add", "codex-direct", "--scope", "user", "--", "codex", "mcp-server",
       "-c", "approval_policy=never", "-c", "sandbox_mode=workspace-write"], { stdio: "inherit" });
   }
   const roots = [path.join(HOME, ".agents", "skills"), path.join(HOME, ".claude", "skills")];
@@ -230,8 +293,6 @@ function doctor() {
     const spec = AGENTS[name];
     const ok = has(spec.bin);
     console.log(`  ${ok ? "✅" : "❌"} ${name} (${spec.bin})${ok ? "" : `  — install it`}`);
-    if (ok && name === "gemini" && !process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENAI_USE_VERTEXAI)
-      console.log(`     ⚠ auth: ${spec.authHint}`);
   }
   console.log(`  ${has("claude") ? "✅" : "❌"} claude (Claude Code)`);
 }
@@ -241,6 +302,8 @@ function doctor() {
   switch (cmd) {
     case "run": await cmdRun(rest); break;
     case "list": cmdList(); break;
+    case "sessions": cmdSessions(); break;
+    case "warm": await cmdWarm(rest); break;
     case "status": showFile(rest, "status.md"); break;
     case "result": showFile(rest, "result.md"); break;
     case "watch": cmdWatch(rest); break;

@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+// Wrapper so `agent-bridge` (no extension) resolves on PATH — both via npm bin and via
+// the Claude Code plugin, which adds this bin/ directory to PATH.
+require("./agent-bridge.js");

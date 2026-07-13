@@ -1,0 +1,15 @@
+{
+  "name": "agent-bridge",
+  "displayName": "Agent Bridge",
+  "version": "0.1.0",
+  "plugins": [
+    {
+      "name": "agent-bridge",
+      "displayName": "Agent Bridge",
+      "description": "Delegate coding tasks from Claude Code to Codex or Antigravity, with a filesystem work-log, telemetry, worktree isolation, warm sessions, and PRs.",
+      "version": "0.1.0",
+      "author": "Ian Kiku",
+      "source": { "source": "github", "repo": "iankiku/agent-bridge" }
+    }
+  ]
+}
