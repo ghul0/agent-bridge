@@ -1,9 +1,12 @@
 # agent-bridge
 
-**Claude plans. Agents execute.** Delegate coding tasks from [Claude Code](https://claude.ai/code)
-to **[Codex](https://github.com/openai/codex)** or **Antigravity (`agy`)**
-(extensible), and track their work through a **plain-Markdown filesystem work-log** that
-Claude can read anytime.
+**Claude plans. Agents execute.** A **Claude Code plugin** that delegates coding tasks from
+[Claude Code](https://claude.ai/code) to **[Codex](https://github.com/openai/codex)** or
+**Antigravity (`agy`)** (extensible), tracking their work through a **plain-Markdown
+filesystem work-log** Claude can read anytime.
+
+> Install in Claude Code: `/plugin marketplace add teamnebula-ai/agent-bridge` then
+> `/plugin install agent-bridge`. See [Install](#install-claude-code-plugin) for prerequisites.
 
 Claude does the thinking — reads the code, designs the change, writes a precise spec —
 then hands execution to an agent. The agent writes its progress to simple Markdown files
@@ -76,43 +79,96 @@ For Codex tasks:
 
 Full architecture: [`docs/CODEX_MCP_BRIDGE_ARCHITECTURE.md`](docs/CODEX_MCP_BRIDGE_ARCHITECTURE.md).
 
-## Install
+## Who does what
 
-`agent-bridge` is a Node CLI package. In development, run it directly from this checkout or
-link this checkout globally. You do not need to publish to npm to use the local version.
+agent-bridge is **directional**: Claude Code is the host that plans and delegates; Codex and
+Antigravity are executors it calls. So there is **one plugin install** (in Claude Code) plus
+**auth for whichever executors you want** — Codex and Antigravity do not install anything.
 
-From this repo:
+| Agent | Role | Setup |
+|-------|------|-------|
+| **Claude Code** | host / orchestrator (`/codex-send`, `/agy-send`) | install this plugin |
+| **Codex** (`codex`) | executor | `codex login` |
+| **Antigravity** (`agy`) | executor | run `agy` once, sign in |
 
-```bash
-cd /Users/raskin/moonshot/agent-bridge
-node bin/agent-bridge.js doctor
-node bin/agent-bridge.js install
+## Install (Claude Code plugin)
+
+In Claude Code:
+
+```text
+/plugin marketplace add teamnebula-ai/agent-bridge
+/plugin install agent-bridge
 ```
 
-To make the `agent-bridge` command point at this local checkout:
+That's the whole install — it adds the `/codex-send` and `/agy-send` skills plus the bundled
+`agent-bridge` CLI (no npm, no global setup). Then make sure your executors are ready:
 
 ```bash
-cd /Users/raskin/moonshot/agent-bridge
+codex login      # if you'll use Codex
+agy              # if you'll use Antigravity — sign in once
+```
+
+Prerequisites the plugin can't provide (install these yourself): **Node ≥ 18**, **Python 3**,
+and the `codex` and/or `agy` CLIs on your PATH. Run `agent-bridge doctor` any time to see
+what's missing.
+
+> **Note:** don't `npm install -g agent-bridge` — that name belongs to a different, unrelated
+> package on npm. This tool is distributed only as a Claude Code plugin.
+
+### Local development (maintainers)
+
+From a clone of this repo:
+
+```bash
+node bin/agent-bridge.js doctor      # run directly
+npm link && agent-bridge doctor      # or link the CLI onto your PATH
+claude plugin validate .claude-plugin/plugin.json    # validate the plugin manifest
+```
+
+## Skill-only install
+
+The bridge skills live in this repo:
+
+```text
+skills/codex-send/SKILL.md
+skills/agy-send/SKILL.md
+```
+
+`agent-bridge install` copies those skills into the global skill directory for this user. If
+you only want to install or refresh the skills through the standard Skills CLI, use
+`npx skills add` from the repo root:
+
+```bash
+cd <path-to>/agent-bridge
+npx skills add . -g --agent '*' -y
+```
+
+That installs the skills globally/user-wide through the normal `npx skills` system. For a
+project-local install, omit `-g` and run it from the project that should receive the skills:
+
+```bash
+npx skills add <path-to>/agent-bridge --agent '*' -y
+```
+
+Important: `npx skills add` installs only the skills. It does not link the `agent-bridge`
+CLI, start the dashboard, register `codex-direct`, or check Codex/Antigravity auth. For the
+full bridge setup, still run:
+
+```bash
+cd <path-to>/agent-bridge
 npm link
-agent-bridge doctor
 agent-bridge install
 ```
 
-For a published package install:
+Quick setup checklist for agents:
 
 ```bash
-npm install -g agent-bridge
-agent-bridge install        # installs /codex-send + /agy-send and starts the dashboard
-agent-bridge doctor         # checks agents + auth
+cd <path-to>/agent-bridge
+npm link
+agent-bridge install
+agent-bridge doctor
+agent-bridge service status
 ```
-
-Prerequisites: **Node ≥ 18**, **Python 3**, and at least one agent:
-- **Codex** — `codex login` (ChatGPT or API key)
-- **Antigravity** — run `agy` once and sign in
-
-`agent-bridge install` refreshes the Claude Code skills (`/codex-send`, `/agy-send`), starts
-the dashboard services, and may register `codex-direct` as an explicit direct-MCP escape
-hatch. The normal path is still `/codex-send` calling `agent-bridge`.
 
 ## Use it
 

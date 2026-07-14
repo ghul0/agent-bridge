@@ -1,15 +1,17 @@
 {
   "name": "agent-bridge",
-  "displayName": "Agent Bridge",
-  "version": "0.1.0",
+  "description": "Team Nebula's agent-bridge — a Claude Code plugin for delegating coding tasks to Codex and Antigravity.",
+  "owner": {
+    "name": "Team Nebula",
+    "url": "https://github.com/teamnebula-ai"
+  },
   "plugins": [
     {
       "name": "agent-bridge",
-      "displayName": "Agent Bridge",
-      "description": "Delegate coding tasks from Claude Code to Codex or Antigravity, with a filesystem work-log, telemetry, worktree isolation, warm sessions, and PRs.",
+      "description": "A Claude Code plugin that delegates coding tasks to Codex and Antigravity, with a filesystem work-log, telemetry, worktree isolation, warm sessions, and PRs.",
       "version": "0.1.0",
-      "author": "Ian Kiku",
-      "source": { "source": "github", "repo": "iankiku/agent-bridge" }
+      "author": { "name": "Ian Kiku" },
+      "source": { "source": "github", "repo": "teamnebula-ai/agent-bridge" }
     }
   ]
 }
