@@ -1,6 +1,6 @@
 ---
 name: agy-send
-description: Delegate an execution task to the Antigravity CLI (agy) while Claude plans. Use when Ian says "/agy-send <task>", "have agy/antigravity do X", "send this to antigravity", or "delegate to agy". Runs agent-bridge (filesystem work-log + telemetry dashboard); Claude tracks Antigravity's progress via a rewritable status.md and answers questions it sends back.
+description: Delegate an execution task to the Antigravity CLI (agy) while Claude plans. Use when the user says "/agy-send <task>", "have agy/antigravity do X", "send this to antigravity", or "delegate to agy". Runs agent-bridge (filesystem work-log + telemetry dashboard); Claude tracks Antigravity's progress via a rewritable status.md and answers questions it sends back.
 ---
 
 # agy-send — Claude plans, Antigravity (agy) executes
@@ -15,6 +15,14 @@ You are the **planner**; Antigravity (the `agy` CLI) is the **executor**. Delega
    agent-bridge run --agent antigravity -C <repo> "<precise task>"    # -s read-only for inspection
    ```
    Requires Antigravity signed in (`agy` once) — check `agent-bridge doctor`.
+
+   **Agent profiles:** To run a specific AGY agent (defined in `~/.gemini/config/agents/<name>.md`),
+   use the `--agent-profile` flag:
+   ```bash
+   agent-bridge run --agent antigravity --agent-profile code-reviewer -s read-only -C <repo> "<task>"
+   ```
+   This passes `--agent <name>` to `agy`, which loads the agent's system instructions and persona.
+
 3. **Track progress via the work-log:**
    ```bash
    agent-bridge status <id>      # the rewritable status.md (status/progress/summary)

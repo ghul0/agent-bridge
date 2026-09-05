@@ -74,7 +74,7 @@ const CODEX_TRANSPORTS = ["mcp", "exec"];
 
 function parseRun(argv) {
   const o = { agent: null, cwd: process.cwd(), sandbox: "workspace-write", transport: null,
-    prompt: null, verify: false, isolate: false, pr: false, session: null, model: null };
+    prompt: null, verify: false, isolate: false, pr: false, session: null, model: null, agentProfile: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--agent" || a === "-a") o.agent = argv[++i];
@@ -82,6 +82,7 @@ function parseRun(argv) {
     else if (a === "-s") o.sandbox = argv[++i];
     else if (a === "--model" || a === "-m") o.model = argv[++i];
     else if (a === "--transport") o.transport = argv[++i];
+    else if (a === "--agent-profile") o.agentProfile = argv[++i];
     else if (a === "--verify") o.verify = true;
     else if (a === "--isolate") o.isolate = true;
     else if (a === "--pr") { o.pr = true; o.isolate = true; }
@@ -109,6 +110,8 @@ async function cmdRun(argv) {
   if (o.transport && o.agent !== "codex") return console.error(`--transport is only supported for codex`) || process.exit(1);
   if (o.agent === "codex" && o.transport && !CODEX_TRANSPORTS.includes(o.transport))
     return console.error(`invalid --transport '${o.transport}' (use: ${CODEX_TRANSPORTS.join(" | ")})`) || process.exit(1);
+  if (o.agent === "codex" && o.agentProfile && (o.transport || "mcp") !== "exec")
+    return console.error(`--agent-profile with codex requires --transport exec (codex mcp-server has no profile param)`) || process.exit(1);
   if (o.verify) process.env.AGENT_BRIDGE_TELEMETRY_VERIFY = "1";
   let r;
   try { r = await dispatch(o); }
