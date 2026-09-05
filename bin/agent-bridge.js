@@ -42,6 +42,8 @@ function usage() {
 Usage:
   agent-bridge run --agent <${AGENT_NAMES.join("|")}> "<task>"   Delegate a task
        [-C <dir>] [-s read-only|workspace-write] [--model <name>] [--transport mcp|exec] [--verify]
+       [--agent-profile <name>]  codex: -p <name> (requires --transport exec);
+                                  antigravity: --agent <name>
        [--isolate]  run in a private git worktree+branch (no collisions)
        [--pr]       --isolate, then commit + push + open a PR (needs gh + remote)
        [--session <name>]  reuse the agent's conversation + worktree across runs
